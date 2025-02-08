@@ -20,28 +20,47 @@ export function activate(context: vscode.ExtensionContext) {
 
       // Recursive function to find and remove empty folders
       const removeEmptyFolders = (folderPath: string): boolean => {
-        let isDirectoryEmpty = true;
-        const items = fs.readdirSync(folderPath);
+        try {
+          // Check if directory exists
+          if (!fs.existsSync(folderPath)) {
+            return false;
+          }
 
-        for (const item of items) {
-          const fullPath = path.join(folderPath, item);
-          const stats = fs.statSync(fullPath);
+          let isDirectoryEmpty = true;
+          const items = fs.readdirSync(folderPath);
 
-          if (stats.isDirectory()) {
-            // Recursively check nested directories
-            const isEmpty = removeEmptyFolders(fullPath);
-            if (isEmpty) {
-              fs.rmdirSync(fullPath);
-              foldersRemoved++;
+          for (const item of items) {
+            const fullPath = path.join(folderPath, item);
+
+            // Check if path exists before getting stats
+            if (!fs.existsSync(fullPath)) {
+              continue;
+            }
+
+            const stats = fs.statSync(fullPath);
+
+            if (stats.isDirectory()) {
+              const isEmpty = removeEmptyFolders(fullPath);
+              if (isEmpty) {
+                try {
+                  fs.rmdirSync(fullPath);
+                  foldersRemoved++;
+                } catch (err) {
+                  console.error(`Failed to remove directory: ${fullPath}`, err);
+                }
+              } else {
+                isDirectoryEmpty = false;
+              }
             } else {
               isDirectoryEmpty = false;
             }
-          } else {
-            isDirectoryEmpty = false;
           }
-        }
 
-        return isDirectoryEmpty;
+          return isDirectoryEmpty;
+        } catch (error) {
+          console.error(`Error processing directory: ${folderPath}`, error);
+          return false;
+        }
       };
 
       try {
