@@ -7,7 +7,6 @@ export function activate(context: vscode.ExtensionContext) {
   let disposable = vscode.commands.registerCommand(
     "empty-folders-remover.removeEmptyFolders",
     async () => {
-      // Get current workspace directory
       const workspaceFolders = vscode.workspace.workspaceFolders;
 
       if (!workspaceFolders) {
@@ -15,64 +14,83 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const rootPath = workspaceFolders[0].uri.fsPath;
-      let foldersRemoved = 0;
+      // Show progress indicator
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Removing empty folders...",
+          cancellable: true,
+        },
+        async (progress, token) => {
+          const rootPath = workspaceFolders[0].uri.fsPath;
+          let foldersRemoved = 0;
 
-      // Recursive function to find and remove empty folders
-      const removeEmptyFolders = (folderPath: string): boolean => {
-        try {
-          // Check if directory exists
-          if (!fs.existsSync(folderPath)) {
-            return false;
-          }
-
-          let isDirectoryEmpty = true;
-          const items = fs.readdirSync(folderPath);
-
-          for (const item of items) {
-            const fullPath = path.join(folderPath, item);
-
-            // Check if path exists before getting stats
-            if (!fs.existsSync(fullPath)) {
-              continue;
+          const removeEmptyFolders = (folderPath: string): boolean => {
+            if (token.isCancellationRequested) {
+              return false;
             }
 
-            const stats = fs.statSync(fullPath);
-
-            if (stats.isDirectory()) {
-              const isEmpty = removeEmptyFolders(fullPath);
-              if (isEmpty) {
-                try {
-                  fs.rmdirSync(fullPath);
-                  foldersRemoved++;
-                } catch (err) {
-                  console.error(`Failed to remove directory: ${fullPath}`, err);
-                }
-              } else {
-                isDirectoryEmpty = false;
+            try {
+              if (!fs.existsSync(folderPath)) {
+                return false;
               }
-            } else {
-              isDirectoryEmpty = false;
+
+              let isDirectoryEmpty = true;
+              const items = fs.readdirSync(folderPath);
+
+              for (const item of items) {
+                const fullPath = path.join(folderPath, item);
+
+                if (!fs.existsSync(fullPath)) {
+                  continue;
+                }
+
+                const stats = fs.statSync(fullPath);
+
+                if (stats.isDirectory()) {
+                  const isEmpty = removeEmptyFolders(fullPath);
+                  if (isEmpty) {
+                    try {
+                      fs.rmdirSync(fullPath);
+                      foldersRemoved++;
+                      progress.report({
+                        message: `Removed: ${path.basename(fullPath)}`,
+                      });
+                    } catch (err) {
+                      console.error(
+                        `Failed to remove directory: ${fullPath}`,
+                        err
+                      );
+                    }
+                  } else {
+                    isDirectoryEmpty = false;
+                  }
+                } else {
+                  isDirectoryEmpty = false;
+                }
+              }
+
+              return isDirectoryEmpty;
+            } catch (error) {
+              console.error(`Error processing directory: ${folderPath}`, error);
+              return false;
             }
+          };
+
+          try {
+            removeEmptyFolders(rootPath);
+            vscode.window.showInformationMessage(
+              `Successfully removed ${foldersRemoved} empty folder${
+                foldersRemoved !== 1 ? "s" : ""
+              }`
+            );
+          } catch (error) {
+            vscode.window.showErrorMessage(
+              `Error removing empty folders: ${error}`
+            );
           }
-
-          return isDirectoryEmpty;
-        } catch (error) {
-          console.error(`Error processing directory: ${folderPath}`, error);
-          return false;
         }
-      };
-
-      try {
-        removeEmptyFolders(rootPath);
-        vscode.window.showInformationMessage(
-          `Empty folders removed: ${foldersRemoved}`
-        );
-      } catch (error) {
-        vscode.window.showErrorMessage(
-          `Error removing empty folders: ${error}`
-        );
-      }
+      );
     }
   );
 
