@@ -52,16 +52,6 @@ This extension is released under the [MIT License](LICENSE).
 
 If you encounter any issues or have suggestions for improvements, please open an issue on our GitHub repository.
 
-## Release Notes
-
-### 1.0.0
-
-Initial release of Empty Folders Remover:
-
-- Basic functionality for finding and removing empty folders
-- Command palette integration
-- Error handling and notifications
-
 ---
 
 **Enjoy cleaner projects!** 🚀
