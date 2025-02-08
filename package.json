@@ -6,6 +6,8 @@
   "icon": "icon.png",
   "main": "./out/extension.js",
   "scripts": {
+    "package": "vsce package",
+    "publish": "vsce publish",
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
