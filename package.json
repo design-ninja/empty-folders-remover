@@ -1,7 +1,7 @@
 {
   "name": "empty-folders-remover",
   "displayName": "Empty Folders Remover",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "VS Code extension to remove empty folders",
   "icon": "icon.png",
   "main": "./out/extension.js",
@@ -36,7 +36,9 @@
     "project-structure",
     "productivity"
   ],
-  "author": "lirik",
+  "author": {
+    "name": "lirik"
+  },
   "license": "ISC",
   "publisher": "lirik",
   "engines": {
