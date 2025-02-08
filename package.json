@@ -1,0 +1,57 @@
+{
+  "name": "empty-folders-remover",
+  "displayName": "Empty Folders Remover",
+  "version": "1.0.0",
+  "description": "VS Code extension to remove empty folders",
+  "icon": "icon.png",
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "empty-folders-remover.removeEmptyFolders",
+        "title": "Remove Empty Folders"
+      }
+    ]
+  },
+  "keywords": [
+    "empty-folders",
+    "cleanup",
+    "remove-empty",
+    "folders",
+    "directory",
+    "clean",
+    "remove",
+    "empty",
+    "maintenance",
+    "organize",
+    "cleaner",
+    "filesystem",
+    "workspace",
+    "project-structure",
+    "productivity"
+  ],
+  "author": "lirik",
+  "license": "ISC",
+  "publisher": "lirik",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/design-ninja/empty-folders-remover.git"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.3"
+  }
+}
