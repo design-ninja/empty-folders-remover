@@ -79,11 +79,15 @@ export function activate(context: vscode.ExtensionContext) {
 
           try {
             removeEmptyFolders(rootPath);
-            vscode.window.showInformationMessage(
-              `Successfully removed ${foldersRemoved} empty folder${
-                foldersRemoved !== 1 ? "s" : ""
-              }`
-            );
+            if (foldersRemoved === 0) {
+              vscode.window.showInformationMessage(
+                "No empty folders were found."
+              );
+            } else {
+              vscode.window.showInformationMessage(
+                `Successfully removed ${foldersRemoved} empty folder${foldersRemoved !== 1 ? "s" : ""}`
+              );
+            }
           } catch (error) {
             vscode.window.showErrorMessage(
               `Error removing empty folders: ${error}`

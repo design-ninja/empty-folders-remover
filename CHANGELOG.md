@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.5] - 2025-05-03
+
+- Show meaningful message when no empty folders are found
+
 ## [1.0.4] - 2024-03-20
 
 - Added progress indicator while removing folders
