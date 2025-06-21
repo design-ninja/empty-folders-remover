@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.1.2] - 2025-06-22
+
+- Maintenance release and dependency updates.
+
 ## [1.1.1] - 2025-06-21
 
 - Replace synchronous fs with fs/promises for better performance
