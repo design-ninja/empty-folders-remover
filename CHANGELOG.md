@@ -1,6 +1,13 @@
 # Changelog
 
-## [1.1.2] - 2025-06-22
+## [1.1.3] - 2025-06-21
+
+### Fixed
+- Removed conflicting files index.js and index.ts from the root of the project
+- Added .vscodeignore file for package extension optimization
+- Fixed project structure for proper operation in Cursor
+
+## [1.1.2] - 2025-06-21
 
 - Maintenance release and dependency updates.
 
