@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0] - 2025-10-18
+
+### Added
+- Cascade removal of empty folders: parent directories are removed when all children are empty
+- Depth-grouped deletion to ensure correct order (children before parents)
+
 ## [1.1.3] - 2025-06-21
 
 ### Fixed

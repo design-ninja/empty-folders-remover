@@ -6,6 +6,7 @@ A simple and efficient Visual Studio Code extension that helps maintain cleanlin
 
 - 🔍 Recursive search for empty folders in your project
 - 🗑️ Automatic removal of found empty directories
+- 🧹 Cascade removal: removes entire chains of empty folders (children → parents)
 - 📊 Display of removed folders count
 - ⚡ Quick execution via command palette
 - 🛡️ Safe operation with error notifications
@@ -28,7 +29,7 @@ After execution, the extension will show the number of empty folders removed.
 
 ## Requirements
 
-- Visual Studio Code version 1.60.0 or higher
+- Visual Studio Code version 1.96.0 or higher
 
 ## Safety Notes
 
@@ -38,7 +39,7 @@ After execution, the extension will show the number of empty folders removed.
 
 ## How it works
 
-The extension performs a recursive scan of your project directory, identifying folders that don't contain any files or subfolders. When such folders are found, they are safely removed from the project structure.
+The extension performs a recursive scan of your project directory. A folder is considered empty if it contains no files and all of its subfolders are empty. Empty folders are removed in a safe order from deepest to parent to avoid conflicts.
 
 ## Contributing
 
