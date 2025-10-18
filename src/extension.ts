@@ -64,6 +64,7 @@ class DirectoryScanner {
 
   async scanDirectories(rootPath: string, token: vscode.CancellationToken): Promise<DirectoryInfo[]> {
     const directories: DirectoryInfo[] = [];
+    const emptyDirs = new Set<string>();
 
     const scanRecursive = async (dirPath: string, depth: number): Promise<void> => {
       if (token.isCancellationRequested) {
@@ -109,12 +110,20 @@ class DirectoryScanner {
           await scanRecursive(subdir, depth + 1);
         }
 
+        // Determine emptiness considering subdirectories emptiness
+        const allSubdirsEmpty = subdirectories.every(sd => emptyDirs.has(sd));
+        const isEmpty = !hasFiles && allSubdirsEmpty;
+
         // Add current directory to list
         directories.push({
           path: dirPath,
           depth,
-          isEmpty: !hasFiles && subdirectories.length === 0
+          isEmpty
         });
+
+        if (isEmpty) {
+          emptyDirs.add(dirPath);
+        }
 
       } catch (error) {
         // Directory not accessible, skip it
@@ -166,18 +175,30 @@ class EmptyFolderRemover {
     progressTracker.setTotal(emptyDirectories.length);
     this.stats.totalScanned = directories.length;
 
-    // Process directories in batches to avoid overwhelming the file system
+    // Process directories grouped by depth to ensure children are removed before parents
     const batchSize = this.config.maxConcurrency;
+    const depthMap = new Map<number, DirectoryInfo[]>();
+    for (const dir of emptyDirectories) {
+      const list = depthMap.get(dir.depth) ?? [];
+      list.push(dir);
+      depthMap.set(dir.depth, list);
+    }
 
-    for (let i = 0; i < emptyDirectories.length; i += batchSize) {
+    const depths = Array.from(depthMap.keys()).sort((a, b) => b - a);
+
+    for (const depth of depths) {
       if (token.isCancellationRequested) {
         break;
       }
-
-      const batch = emptyDirectories.slice(i, i + batchSize);
-      const promises = batch.map(dir => this.removeDirectory(dir, progressTracker));
-
-      await Promise.allSettled(promises);
+      const group = depthMap.get(depth) || [];
+      for (let i = 0; i < group.length; i += batchSize) {
+        if (token.isCancellationRequested) {
+          break;
+        }
+        const batch = group.slice(i, i + batchSize);
+        const promises = batch.map(dir => this.removeDirectory(dir, progressTracker));
+        await Promise.allSettled(promises);
+      }
     }
 
     this.stats.duration = Date.now() - startTime;
