@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 import * as fs from "fs/promises";
-import * as fsSync from "fs";
 import * as path from "path";
 
 // Configuration interface
@@ -56,10 +55,21 @@ class ProgressTracker {
 
 // Directory scanner class
 class DirectoryScanner {
-  private excludePatterns: string[];
+  private simplePatterns: Set<string>;
+  private regexPatterns: RegExp[];
 
   constructor(config: EmptyFolderConfig) {
-    this.excludePatterns = config.excludePatterns;
+    this.simplePatterns = new Set<string>();
+    this.regexPatterns = [];
+
+    // Pre-compile patterns for faster matching
+    for (const pattern of config.excludePatterns) {
+      if (pattern.includes('*')) {
+        this.regexPatterns.push(new RegExp('^' + pattern.replace(/\*/g, '.*') + '$', 'i'));
+      } else {
+        this.simplePatterns.add(pattern.toLowerCase());
+      }
+    }
   }
 
   async scanDirectories(rootPath: string, token: vscode.CancellationToken): Promise<DirectoryInfo[]> {
@@ -72,14 +82,14 @@ class DirectoryScanner {
       }
 
       try {
-        await fs.access(dirPath);
-        const items = await fs.readdir(dirPath);
-
         // Check if directory should be excluded
         const dirName = path.basename(dirPath);
         if (this.shouldExclude(dirName)) {
           return;
         }
+
+        // Use withFileTypes to avoid extra stat calls
+        const items = await fs.readdir(dirPath, { withFileTypes: true });
 
         const subdirectories: string[] = [];
         let hasFiles = false;
@@ -89,26 +99,15 @@ class DirectoryScanner {
             return;
           }
 
-          const fullPath = path.join(dirPath, item);
-
-          try {
-            const stats = await fs.stat(fullPath);
-
-            if (stats.isDirectory()) {
-              subdirectories.push(fullPath);
-            } else {
-              hasFiles = true;
-            }
-          } catch (error) {
-            // Ignore inaccessible items
-            continue;
+          if (item.isDirectory()) {
+            subdirectories.push(path.join(dirPath, item.name));
+          } else {
+            hasFiles = true;
           }
         }
 
-        // Process subdirectories first
-        for (const subdir of subdirectories) {
-          await scanRecursive(subdir, depth + 1);
-        }
+        // Process subdirectories in parallel for better performance
+        await Promise.all(subdirectories.map(subdir => scanRecursive(subdir, depth + 1)));
 
         // Determine emptiness considering subdirectories emptiness
         const allSubdirsEmpty = subdirectories.every(sd => emptyDirs.has(sd));
@@ -125,7 +124,7 @@ class DirectoryScanner {
           emptyDirs.add(dirPath);
         }
 
-      } catch (error) {
+      } catch {
         // Directory not accessible, skip it
         return;
       }
@@ -138,13 +137,15 @@ class DirectoryScanner {
   }
 
   private shouldExclude(dirName: string): boolean {
-    return this.excludePatterns.some(pattern => {
-      if (pattern.includes('*')) {
-        const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$', 'i');
-        return regex.test(dirName);
-      }
-      return dirName.toLowerCase() === pattern.toLowerCase();
-    });
+    const lowerName = dirName.toLowerCase();
+
+    // O(1) lookup for simple patterns
+    if (this.simplePatterns.has(lowerName)) {
+      return true;
+    }
+
+    // Check regex patterns
+    return this.regexPatterns.some(regex => regex.test(dirName));
   }
 }
 

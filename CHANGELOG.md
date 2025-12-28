@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.0] - 2025-12-28
+
+### Performance
+- Use `readdir` with `withFileTypes` option to avoid extra `stat` calls
+- Parallelize subdirectory scanning with `Promise.all`
+- Cache RegExp patterns for exclude matching
+- Use `Set` for O(1) simple pattern matching
+
+### Fixed
+- Remove unused `fsSync` import
+
+### Added
+- Bugs URL in package.json for issue reporting
+- Lazy activation events
+
 ## [1.2.0] - 2025-10-18
 
 ### Added
