@@ -1,7 +1,7 @@
 {
   "name": "empty-folders-remover",
   "displayName": "Empty Folders Remover",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "VS Code extension to remove empty folders",
   "icon": "icon.png",
   "main": "./out/extension.js",
@@ -97,6 +97,10 @@
     "type": "git",
     "url": "https://github.com/design-ninja/empty-folders-remover.git"
   },
+  "bugs": {
+    "url": "https://github.com/design-ninja/empty-folders-remover/issues"
+  },
+  "activationEvents": [],
   "devDependencies": {
     "@types/node": "^22.13.1",
     "@types/vscode": "^1.96.0",

@@ -30,7 +30,17 @@ class ProgressTracker {
 // Directory scanner class
 class DirectoryScanner {
     constructor(config) {
-        this.excludePatterns = config.excludePatterns;
+        this.simplePatterns = new Set();
+        this.regexPatterns = [];
+        // Pre-compile patterns for faster matching
+        for (const pattern of config.excludePatterns) {
+            if (pattern.includes('*')) {
+                this.regexPatterns.push(new RegExp('^' + pattern.replace(/\*/g, '.*') + '$', 'i'));
+            }
+            else {
+                this.simplePatterns.add(pattern.toLowerCase());
+            }
+        }
     }
     async scanDirectories(rootPath, token) {
         const directories = [];
@@ -40,38 +50,28 @@ class DirectoryScanner {
                 return;
             }
             try {
-                await fs.access(dirPath);
-                const items = await fs.readdir(dirPath);
                 // Check if directory should be excluded
                 const dirName = path.basename(dirPath);
                 if (this.shouldExclude(dirName)) {
                     return;
                 }
+                // Use withFileTypes to avoid extra stat calls
+                const items = await fs.readdir(dirPath, { withFileTypes: true });
                 const subdirectories = [];
                 let hasFiles = false;
                 for (const item of items) {
                     if (token.isCancellationRequested) {
                         return;
                     }
-                    const fullPath = path.join(dirPath, item);
-                    try {
-                        const stats = await fs.stat(fullPath);
-                        if (stats.isDirectory()) {
-                            subdirectories.push(fullPath);
-                        }
-                        else {
-                            hasFiles = true;
-                        }
+                    if (item.isDirectory()) {
+                        subdirectories.push(path.join(dirPath, item.name));
                     }
-                    catch (error) {
-                        // Ignore inaccessible items
-                        continue;
+                    else {
+                        hasFiles = true;
                     }
                 }
-                // Process subdirectories first
-                for (const subdir of subdirectories) {
-                    await scanRecursive(subdir, depth + 1);
-                }
+                // Process subdirectories in parallel for better performance
+                await Promise.all(subdirectories.map(subdir => scanRecursive(subdir, depth + 1)));
                 // Determine emptiness considering subdirectories emptiness
                 const allSubdirsEmpty = subdirectories.every(sd => emptyDirs.has(sd));
                 const isEmpty = !hasFiles && allSubdirsEmpty;
@@ -85,7 +85,7 @@ class DirectoryScanner {
                     emptyDirs.add(dirPath);
                 }
             }
-            catch (error) {
+            catch {
                 // Directory not accessible, skip it
                 return;
             }
@@ -95,13 +95,13 @@ class DirectoryScanner {
         return directories.sort((a, b) => b.depth - a.depth);
     }
     shouldExclude(dirName) {
-        return this.excludePatterns.some(pattern => {
-            if (pattern.includes('*')) {
-                const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$', 'i');
-                return regex.test(dirName);
-            }
-            return dirName.toLowerCase() === pattern.toLowerCase();
-        });
+        const lowerName = dirName.toLowerCase();
+        // O(1) lookup for simple patterns
+        if (this.simplePatterns.has(lowerName)) {
+            return true;
+        }
+        // Check regex patterns
+        return this.regexPatterns.some(regex => regex.test(dirName));
     }
 }
 // Empty folder remover class
