@@ -271,30 +271,55 @@ export function activate(context: vscode.ExtensionContext) {
         },
         async (progress, token) => {
           try {
-            const rootPath = workspaceFolders[0].uri.fsPath;
             const progressTracker = new ProgressTracker(progress);
-
-            // Phase 1: Scan directories
-            progress.report({ message: "Scanning directories..." });
             const scanner = new DirectoryScanner(config);
-            const directories = await scanner.scanDirectories(rootPath, token);
+
+            // Aggregate stats across all workspace folders
+            const aggregatedStats: RemovalStats = {
+              totalScanned: 0,
+              totalRemoved: 0,
+              totalErrors: 0,
+              duration: 0,
+              errors: []
+            };
+            const startTime = Date.now();
+
+            // Process all workspace folders
+            for (const folder of workspaceFolders) {
+              if (token.isCancellationRequested) {
+                vscode.window.showInformationMessage("Operation cancelled by user.");
+                return;
+              }
+
+              const rootPath = folder.uri.fsPath;
+
+              // Phase 1: Scan directories
+              progress.report({ message: `Scanning ${folder.name}...` });
+              const directories = await scanner.scanDirectories(rootPath, token);
+
+              if (token.isCancellationRequested) {
+                vscode.window.showInformationMessage("Operation cancelled by user.");
+                return;
+              }
+
+              // Phase 2: Remove empty folders
+              const remover = new EmptyFolderRemover(config);
+              const stats = await remover.removeEmptyFolders(directories, progressTracker, token);
+
+              // Aggregate stats
+              aggregatedStats.totalScanned += stats.totalScanned;
+              aggregatedStats.totalRemoved += stats.totalRemoved;
+              aggregatedStats.totalErrors += stats.totalErrors;
+              aggregatedStats.errors.push(...stats.errors);
+            }
 
             if (token.isCancellationRequested) {
               vscode.window.showInformationMessage("Operation cancelled by user.");
               return;
             }
 
-            // Phase 2: Remove empty folders
-            const remover = new EmptyFolderRemover(config);
-            const stats = await remover.removeEmptyFolders(directories, progressTracker, token);
-
-            // Show results
-            if (token.isCancellationRequested) {
-              vscode.window.showInformationMessage("Operation cancelled by user.");
-              return;
-            }
-
-            await showResults(stats, config.dryRun);
+            aggregatedStats.duration = Date.now() - startTime;
+            await showResults(aggregatedStats, config.dryRun);
 
           } catch (error) {
             vscode.window.showErrorMessage(
