@@ -197,6 +197,9 @@ export class EmptyFolderRemover {
 
         this.stats.totalRemoved++;
         onProgress(`${this.config.dryRun ? '[DRY RUN] Would remove' : 'Removed'}: ${path.basename(dir.path)}`);
+      } else {
+        // Directory is no longer empty, skip but still update progress
+        onProgress(`Skipped (no longer empty): ${path.basename(dir.path)}`);
       }
     } catch (error) {
       this.stats.totalErrors++;
