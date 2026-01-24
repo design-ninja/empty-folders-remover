@@ -61,21 +61,34 @@ function activate(context) {
                 // Aggregate stats across all workspace folders
                 const aggregatedStats = (0, core_1.createEmptyStats)();
                 const startTime = Date.now();
-                // Process all workspace folders
+                // Phase 1: Scan all workspace folders first
+                const allDirectoriesMap = new Map();
                 for (const folder of workspaceFolders) {
                     if (token.isCancellationRequested) {
                         vscode.window.showInformationMessage("Operation cancelled by user.");
                         return;
                     }
-                    const rootPath = folder.uri.fsPath;
-                    // Phase 1: Scan directories
                     progress.report({ message: `Scanning ${folder.name}...` });
-                    const directories = await scanner.scanDirectories(rootPath, token);
+                    const directories = await scanner.scanDirectories(folder.uri.fsPath, token);
+                    allDirectoriesMap.set(folder.uri.fsPath, directories);
+                }
+                if (token.isCancellationRequested) {
+                    vscode.window.showInformationMessage("Operation cancelled by user.");
+                    return;
+                }
+                // Calculate total empty directories across all folders
+                let totalEmpty = 0;
+                for (const directories of allDirectoriesMap.values()) {
+                    totalEmpty += directories.filter(d => d.isEmpty).length;
+                }
+                progressTracker.setTotal(totalEmpty);
+                // Phase 2: Remove empty folders from all workspace folders
+                for (const folder of workspaceFolders) {
                     if (token.isCancellationRequested) {
                         vscode.window.showInformationMessage("Operation cancelled by user.");
                         return;
                     }
-                    // Phase 2: Remove empty folders
+                    const directories = allDirectoriesMap.get(folder.uri.fsPath) || [];
                     const remover = new core_1.EmptyFolderRemover(config);
                     const stats = await remover.removeEmptyFolders(directories, (msg) => progressTracker.update(msg), token);
                     // Aggregate stats
