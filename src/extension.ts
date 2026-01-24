@@ -1,30 +1,11 @@
 import * as vscode from "vscode";
-import * as fs from "fs/promises";
-import * as path from "path";
-
-// Configuration interface
-interface EmptyFolderConfig {
-  excludePatterns: string[];
-  maxConcurrency: number;
-  dryRun: boolean;
-  showProgress: boolean;
-}
-
-// Directory information interface
-interface DirectoryInfo {
-  path: string;
-  depth: number;
-  isEmpty: boolean;
-}
-
-// Operation statistics interface
-interface RemovalStats {
-  totalScanned: number;
-  totalRemoved: number;
-  totalErrors: number;
-  duration: number;
-  errors: string[];
-}
+import {
+  EmptyFolderConfig,
+  RemovalStats,
+  DirectoryScanner,
+  EmptyFolderRemover,
+  createEmptyStats
+} from "./core";
 
 // Progress tracking class
 class ProgressTracker {
@@ -50,185 +31,6 @@ class ProgressTracker {
       message: `${message} (${percentage}%, ETA: ${eta}s)`,
       increment: this.total > 0 ? (1 / this.total) * 100 : 0
     });
-  }
-}
-
-// Directory scanner class
-class DirectoryScanner {
-  private simplePatterns: Set<string>;
-  private regexPatterns: RegExp[];
-
-  constructor(config: EmptyFolderConfig) {
-    this.simplePatterns = new Set<string>();
-    this.regexPatterns = [];
-
-    // Pre-compile patterns for faster matching
-    for (const pattern of config.excludePatterns) {
-      if (pattern.includes('*')) {
-        this.regexPatterns.push(new RegExp('^' + pattern.replace(/\*/g, '.*') + '$', 'i'));
-      } else {
-        this.simplePatterns.add(pattern.toLowerCase());
-      }
-    }
-  }
-
-  async scanDirectories(rootPath: string, token: vscode.CancellationToken): Promise<DirectoryInfo[]> {
-    const directories: DirectoryInfo[] = [];
-    const emptyDirs = new Set<string>();
-
-    const scanRecursive = async (dirPath: string, depth: number): Promise<void> => {
-      if (token.isCancellationRequested) {
-        return;
-      }
-
-      try {
-        // Check if directory should be excluded
-        const dirName = path.basename(dirPath);
-        if (this.shouldExclude(dirName)) {
-          return;
-        }
-
-        // Use withFileTypes to avoid extra stat calls
-        const items = await fs.readdir(dirPath, { withFileTypes: true });
-
-        const subdirectories: string[] = [];
-        let hasFiles = false;
-
-        for (const item of items) {
-          if (token.isCancellationRequested) {
-            return;
-          }
-
-          if (item.isDirectory()) {
-            subdirectories.push(path.join(dirPath, item.name));
-          } else {
-            hasFiles = true;
-          }
-        }
-
-        // Process subdirectories in parallel for better performance
-        await Promise.all(subdirectories.map(subdir => scanRecursive(subdir, depth + 1)));
-
-        // Determine emptiness considering subdirectories emptiness
-        const allSubdirsEmpty = subdirectories.every(sd => emptyDirs.has(sd));
-        const isEmpty = !hasFiles && allSubdirsEmpty;
-
-        // Add current directory to list
-        directories.push({
-          path: dirPath,
-          depth,
-          isEmpty
-        });
-
-        if (isEmpty) {
-          emptyDirs.add(dirPath);
-        }
-
-      } catch {
-        // Directory not accessible, skip it
-        return;
-      }
-    };
-
-    await scanRecursive(rootPath, 0);
-
-    // Sort by depth (deepest first) for bottom-up processing
-    return directories.sort((a, b) => b.depth - a.depth);
-  }
-
-  private shouldExclude(dirName: string): boolean {
-    const lowerName = dirName.toLowerCase();
-
-    // O(1) lookup for simple patterns
-    if (this.simplePatterns.has(lowerName)) {
-      return true;
-    }
-
-    // Check regex patterns
-    return this.regexPatterns.some(regex => regex.test(dirName));
-  }
-}
-
-// Empty folder remover class
-class EmptyFolderRemover {
-  private config: EmptyFolderConfig;
-  private stats: RemovalStats;
-
-  constructor(config: EmptyFolderConfig) {
-    this.config = config;
-    this.stats = {
-      totalScanned: 0,
-      totalRemoved: 0,
-      totalErrors: 0,
-      duration: 0,
-      errors: []
-    };
-  }
-
-  async removeEmptyFolders(
-    directories: DirectoryInfo[],
-    progressTracker: ProgressTracker,
-    token: vscode.CancellationToken
-  ): Promise<RemovalStats> {
-    const startTime = Date.now();
-    const emptyDirectories = directories.filter(dir => dir.isEmpty);
-
-    progressTracker.setTotal(emptyDirectories.length);
-    this.stats.totalScanned = directories.length;
-
-    // Process directories grouped by depth to ensure children are removed before parents
-    const batchSize = this.config.maxConcurrency;
-    const depthMap = new Map<number, DirectoryInfo[]>();
-    for (const dir of emptyDirectories) {
-      const list = depthMap.get(dir.depth) ?? [];
-      list.push(dir);
-      depthMap.set(dir.depth, list);
-    }
-
-    const depths = Array.from(depthMap.keys()).sort((a, b) => b - a);
-
-    for (const depth of depths) {
-      if (token.isCancellationRequested) {
-        break;
-      }
-      const group = depthMap.get(depth) || [];
-      for (let i = 0; i < group.length; i += batchSize) {
-        if (token.isCancellationRequested) {
-          break;
-        }
-        const batch = group.slice(i, i + batchSize);
-        const promises = batch.map(dir => this.removeDirectory(dir, progressTracker));
-        await Promise.allSettled(promises);
-      }
-    }
-
-    this.stats.duration = Date.now() - startTime;
-    return this.stats;
-  }
-
-  private async removeDirectory(dir: DirectoryInfo, progressTracker: ProgressTracker): Promise<void> {
-    try {
-      // Double-check if directory is still empty before removal
-      const items = await fs.readdir(dir.path);
-
-      if (items.length === 0) {
-        if (!this.config.dryRun) {
-          await fs.rmdir(dir.path);
-        }
-
-        this.stats.totalRemoved++;
-        progressTracker.update(`${this.config.dryRun ? '[DRY RUN] Would remove' : 'Removed'}: ${path.basename(dir.path)}`);
-      }
-    } catch (error) {
-      this.stats.totalErrors++;
-      const errorMessage = `Failed to remove ${dir.path}: ${error instanceof Error ? error.message : String(error)}`;
-      this.stats.errors.push(errorMessage);
-      progressTracker.update(`Error: ${path.basename(dir.path)}`);
-    }
-  }
-
-  getStats(): RemovalStats {
-    return this.stats;
   }
 }
 
@@ -275,13 +77,7 @@ export function activate(context: vscode.ExtensionContext) {
             const scanner = new DirectoryScanner(config);
 
             // Aggregate stats across all workspace folders
-            const aggregatedStats: RemovalStats = {
-              totalScanned: 0,
-              totalRemoved: 0,
-              totalErrors: 0,
-              duration: 0,
-              errors: []
-            };
+            const aggregatedStats: RemovalStats = createEmptyStats();
             const startTime = Date.now();
 
             // Process all workspace folders
@@ -304,7 +100,11 @@ export function activate(context: vscode.ExtensionContext) {
 
               // Phase 2: Remove empty folders
               const remover = new EmptyFolderRemover(config);
-              const stats = await remover.removeEmptyFolders(directories, progressTracker, token);
+              const stats = await remover.removeEmptyFolders(
+                directories,
+                (msg) => progressTracker.update(msg),
+                token
+              );
 
               // Aggregate stats
               aggregatedStats.totalScanned += stats.totalScanned;
