@@ -7,6 +7,7 @@ A simple and efficient Visual Studio Code extension that helps maintain cleanlin
 - 🔍 Recursive search for empty folders in your project
 - 🗑️ Automatic removal of found empty directories
 - 🧹 Cascade removal: removes entire chains of empty folders (children → parents)
+- 📁 Multi-root workspace support: processes all folders in your workspace
 - 📊 Display of removed folders count
 - ⚡ Quick execution via command palette
 - 🛡️ Safe operation with error notifications

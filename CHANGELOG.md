@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.0] - 2026-01-24
+
+### Added
+- Multi-root workspace support: now processes all folders in a workspace instead of only the first one
+- Unit test suite with 19 tests covering core functionality
+
+### Fixed
+- Progress tracker percentage and ETA calculations now work correctly
+
+### Changed
+- Refactored core logic into separate module for better testability
+
 ## [1.3.0] - 2025-12-28
 
 ### Performance
