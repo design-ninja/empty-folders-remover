@@ -103,7 +103,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Calculate total empty directories across all folders
             let totalEmpty = 0;
             for (const directories of allDirectoriesMap.values()) {
-              totalEmpty += directories.filter(d => d.isEmpty).length;
+              totalEmpty += directories.filter(d => d.isEmpty && d.depth > 0).length;
             }
             progressTracker.setTotal(totalEmpty);
 

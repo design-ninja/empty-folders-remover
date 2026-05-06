@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.1] - 2026-05-06
+
+### Fixed
+- Prevent workspace root folders from being removed during empty-folder cleanup
+- Ensure dry-run mode reports nested empty folder chains correctly
+- Clamp invalid `maxConcurrency` settings to avoid hangs
+- Treat wildcard exclude pattern metacharacters literally
+
+### Safety
+- Add regression coverage to verify folders with files, hidden files, or files created after scanning are preserved
+
 ## [1.4.0] - 2026-01-24
 
 ### Added

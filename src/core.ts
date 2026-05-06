@@ -33,6 +33,21 @@ export interface CancellationToken {
 // Progress callback type
 export type ProgressCallback = (message: string) => void;
 
+function wildcardPatternToRegex(pattern: string): RegExp {
+  const escapedPattern = pattern
+    .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, ".*");
+  return new RegExp(`^${escapedPattern}$`, "i");
+}
+
+function normalizeMaxConcurrency(maxConcurrency: number): number {
+  if (!Number.isFinite(maxConcurrency)) {
+    return 1;
+  }
+
+  return Math.max(1, Math.min(50, Math.floor(maxConcurrency)));
+}
+
 // Directory scanner class
 export class DirectoryScanner {
   private simplePatterns: Set<string>;
@@ -45,7 +60,7 @@ export class DirectoryScanner {
     // Pre-compile patterns for faster matching
     for (const pattern of config.excludePatterns) {
       if (pattern.includes('*')) {
-        this.regexPatterns.push(new RegExp('^' + pattern.replace(/\*/g, '.*') + '$', 'i'));
+        this.regexPatterns.push(wildcardPatternToRegex(pattern));
       } else {
         this.simplePatterns.add(pattern.toLowerCase());
       }
@@ -151,12 +166,12 @@ export class EmptyFolderRemover {
     token: CancellationToken
   ): Promise<RemovalStats> {
     const startTime = Date.now();
-    const emptyDirectories = directories.filter(dir => dir.isEmpty);
+    const emptyDirectories = directories.filter(dir => dir.isEmpty && dir.depth > 0);
 
     this.stats.totalScanned = directories.length;
 
     // Process directories grouped by depth to ensure children are removed before parents
-    const batchSize = this.config.maxConcurrency;
+    const batchSize = normalizeMaxConcurrency(this.config.maxConcurrency);
     const depthMap = new Map<number, DirectoryInfo[]>();
     for (const dir of emptyDirectories) {
       const list = depthMap.get(dir.depth) ?? [];
@@ -187,16 +202,20 @@ export class EmptyFolderRemover {
 
   private async removeDirectory(dir: DirectoryInfo, onProgress: ProgressCallback): Promise<void> {
     try {
+      if (this.config.dryRun) {
+        this.stats.totalRemoved++;
+        onProgress(`[DRY RUN] Would remove: ${path.basename(dir.path)}`);
+        return;
+      }
+
       // Double-check if directory is still empty before removal
       const items = await fs.readdir(dir.path);
 
       if (items.length === 0) {
-        if (!this.config.dryRun) {
-          await fs.rmdir(dir.path);
-        }
+        await fs.rmdir(dir.path);
 
         this.stats.totalRemoved++;
-        onProgress(`${this.config.dryRun ? '[DRY RUN] Would remove' : 'Removed'}: ${path.basename(dir.path)}`);
+        onProgress(`Removed: ${path.basename(dir.path)}`);
       } else {
         // Directory is no longer empty, skip but still update progress
         onProgress(`Skipped (no longer empty): ${path.basename(dir.path)}`);

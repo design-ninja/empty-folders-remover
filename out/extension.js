@@ -79,7 +79,7 @@ function activate(context) {
                 // Calculate total empty directories across all folders
                 let totalEmpty = 0;
                 for (const directories of allDirectoriesMap.values()) {
-                    totalEmpty += directories.filter(d => d.isEmpty).length;
+                    totalEmpty += directories.filter(d => d.isEmpty && d.depth > 0).length;
                 }
                 progressTracker.setTotal(totalEmpty);
                 // Phase 2: Remove empty folders from all workspace folders

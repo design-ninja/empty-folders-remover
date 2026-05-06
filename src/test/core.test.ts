@@ -84,6 +84,17 @@ describe("DirectoryScanner", () => {
       assert.strictEqual(scanner.shouldExclude(".git"), false);
       assert.strictEqual(scanner.shouldExclude("node_modules"), false);
     });
+
+    it("should treat wildcard pattern metacharacters literally", () => {
+      const scanner = new DirectoryScanner(createTestConfig({
+        excludePatterns: ["*[", "foo.+*"]
+      }));
+
+      assert.strictEqual(scanner.shouldExclude("abc["), true);
+      assert.strictEqual(scanner.shouldExclude("abcx"), false);
+      assert.strictEqual(scanner.shouldExclude("foo.+bar"), true);
+      assert.strictEqual(scanner.shouldExclude("foox+bar"), false);
+    });
   });
 
   describe("scanDirectories", () => {
@@ -126,6 +137,21 @@ describe("DirectoryScanner", () => {
     it("should mark parent as non-empty if child has files", async () => {
       await createTestStructure(tempDir, {
         "parent/child/file.txt": "content"
+      });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const parent = directories.find(d => d.path === path.join(tempDir, "parent"));
+      const child = directories.find(d => d.path === path.join(tempDir, "parent", "child"));
+
+      assert.strictEqual(child?.isEmpty, false);
+      assert.strictEqual(parent?.isEmpty, false);
+    });
+
+    it("should treat hidden files as content", async () => {
+      await createTestStructure(tempDir, {
+        "parent/child/.gitkeep": ""
       });
 
       const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
@@ -235,6 +261,18 @@ describe("EmptyFolderRemover", () => {
       await fs.access(emptyDir); // Should not throw
     });
 
+    it("should count nested empty directories in dry run mode", async () => {
+      await fs.mkdir(path.join(tempDir, "a", "b", "c", "d", "e"), { recursive: true });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+      const remover = new EmptyFolderRemover(createTestConfig({ dryRun: true }));
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 5);
+      await fs.access(path.join(tempDir, "a", "b", "c", "d", "e"));
+    });
+
     it("should skip directories that are no longer empty", async () => {
       const dirPath = path.join(tempDir, "was-empty");
       await fs.mkdir(dirPath);
@@ -253,6 +291,39 @@ describe("EmptyFolderRemover", () => {
       await fs.access(dirPath); // Directory should still exist
     });
 
+    it("should preserve a scanned empty chain if a file appears before removal", async () => {
+      const deepest = path.join(tempDir, "a", "b", "c", "d");
+      await fs.mkdir(deepest, { recursive: true });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+      await fs.writeFile(path.join(deepest, "important.txt"), "content");
+
+      const remover = new EmptyFolderRemover(createTestConfig());
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 0);
+      assert.strictEqual(stats.totalErrors, 0);
+      await fs.access(path.join(deepest, "important.txt"));
+      await fs.access(path.join(tempDir, "a"));
+    });
+
+    it("should preserve non-empty branches while removing empty branches", async () => {
+      await createTestStructure(tempDir, {
+        "non-empty/deep/important.txt": "content"
+      });
+      await fs.mkdir(path.join(tempDir, "empty", "deep"), { recursive: true });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+      const remover = new EmptyFolderRemover(createTestConfig());
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 2);
+      await fs.access(path.join(tempDir, "non-empty", "deep", "important.txt"));
+      await assert.rejects(fs.access(path.join(tempDir, "empty")), "Empty branch should be removed");
+    });
+
     it("should remove nested empty directories (children before parents)", async () => {
       const parent = path.join(tempDir, "parent");
       const child = path.join(parent, "child");
@@ -268,6 +339,35 @@ describe("EmptyFolderRemover", () => {
 
       assert.strictEqual(stats.totalRemoved, 2);
       await assert.rejects(fs.access(parent), "Parent should be removed");
+    });
+
+    it("should preserve the workspace root when an empty chain is removed", async () => {
+      await fs.mkdir(path.join(tempDir, "a", "b", "c", "d"), { recursive: true });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+      const remover = new EmptyFolderRemover(createTestConfig());
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 4);
+      await fs.access(tempDir);
+      await assert.rejects(fs.access(path.join(tempDir, "a")), "Nested chain should be removed");
+    });
+
+    it("should clamp invalid max concurrency values", async () => {
+      const emptyDir = path.join(tempDir, "empty");
+      await fs.mkdir(emptyDir);
+
+      const directories: DirectoryInfo[] = [
+        { path: emptyDir, depth: 1, isEmpty: true }
+      ];
+
+      const remover = new EmptyFolderRemover(createTestConfig({ maxConcurrency: 0 }));
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 1);
+      assert.strictEqual(stats.totalErrors, 0);
+      await assert.rejects(fs.access(emptyDir), "Directory should be removed");
     });
 
     it("should handle errors gracefully", async () => {
