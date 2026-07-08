@@ -33,6 +33,7 @@ function createToken(cancelled = false): CancellationToken {
 function createTestConfig(overrides: Partial<EmptyFolderConfig> = {}): EmptyFolderConfig {
   return {
     excludePatterns: [".git", "node_modules"],
+    junkFiles: [".DS_Store", "Thumbs.db", "desktop.ini"],
     maxConcurrency: 10,
     dryRun: false,
     showProgress: true,
@@ -162,6 +163,59 @@ describe("DirectoryScanner", () => {
 
       assert.strictEqual(child?.isEmpty, false);
       assert.strictEqual(parent?.isEmpty, false);
+    });
+
+    it("should treat folders containing only junk files as empty", async () => {
+      await createTestStructure(tempDir, {
+        "assets/video/.DS_Store": "junk",
+        "non-empty/.DS_Store": "junk",
+        "non-empty/file.txt": "content"
+      });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const assets = directories.find(d => d.path === path.join(tempDir, "assets"));
+      const video = directories.find(d => d.path === path.join(tempDir, "assets", "video"));
+      const nonEmpty = directories.find(d => d.path === path.join(tempDir, "non-empty"));
+
+      assert.strictEqual(video?.isEmpty, true, "video contains only .DS_Store");
+      assert.strictEqual(assets?.isEmpty, true, "assets contains only empty video");
+      assert.strictEqual(nonEmpty?.isEmpty, false, "non-empty has a real file");
+    });
+
+    it("should match junk files case-insensitively and with wildcards", async () => {
+      await createTestStructure(tempDir, {
+        "a/THUMBS.DB": "junk",
+        "b/scratch.tmp": "junk"
+      });
+
+      const scanner = new DirectoryScanner(createTestConfig({
+        excludePatterns: [],
+        junkFiles: ["Thumbs.db", "*.tmp"]
+      }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const a = directories.find(d => d.path === path.join(tempDir, "a"));
+      const b = directories.find(d => d.path === path.join(tempDir, "b"));
+
+      assert.strictEqual(a?.isEmpty, true);
+      assert.strictEqual(b?.isEmpty, true);
+    });
+
+    it("should treat junk files as content when junkFiles is empty", async () => {
+      await createTestStructure(tempDir, {
+        "folder/.DS_Store": "junk"
+      });
+
+      const scanner = new DirectoryScanner(createTestConfig({
+        excludePatterns: [],
+        junkFiles: []
+      }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const folder = directories.find(d => d.path === path.join(tempDir, "folder"));
+      assert.strictEqual(folder?.isEmpty, false);
     });
 
     it("should skip excluded directories", async () => {
@@ -352,6 +406,55 @@ describe("EmptyFolderRemover", () => {
       assert.strictEqual(stats.totalRemoved, 4);
       await fs.access(tempDir);
       await assert.rejects(fs.access(path.join(tempDir, "a")), "Nested chain should be removed");
+    });
+
+    it("should remove nested folders containing only junk files", async () => {
+      const video = path.join(tempDir, "assets", "video");
+      await fs.mkdir(video, { recursive: true });
+      await fs.writeFile(path.join(video, ".DS_Store"), "junk");
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+      const remover = new EmptyFolderRemover(createTestConfig());
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 2);
+      assert.strictEqual(stats.totalErrors, 0);
+      await assert.rejects(fs.access(path.join(tempDir, "assets")), "assets should be removed");
+    });
+
+    it("should not remove a folder where a real file appeared next to junk", async () => {
+      const dirPath = path.join(tempDir, "was-empty");
+      await fs.mkdir(dirPath);
+      await fs.writeFile(path.join(dirPath, ".DS_Store"), "junk");
+      await fs.writeFile(path.join(dirPath, "important.txt"), "content");
+
+      const directories: DirectoryInfo[] = [
+        { path: dirPath, depth: 1, isEmpty: true }
+      ];
+
+      const remover = new EmptyFolderRemover(createTestConfig());
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 0);
+      await fs.access(path.join(dirPath, ".DS_Store"));
+      await fs.access(path.join(dirPath, "important.txt"));
+    });
+
+    it("should not delete junk files in dry run mode", async () => {
+      const dirPath = path.join(tempDir, "junk-only");
+      await fs.mkdir(dirPath);
+      await fs.writeFile(path.join(dirPath, ".DS_Store"), "junk");
+
+      const directories: DirectoryInfo[] = [
+        { path: dirPath, depth: 1, isEmpty: true }
+      ];
+
+      const remover = new EmptyFolderRemover(createTestConfig({ dryRun: true }));
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 1);
+      await fs.access(path.join(dirPath, ".DS_Store"));
     });
 
     it("should clamp invalid max concurrency values", async () => {

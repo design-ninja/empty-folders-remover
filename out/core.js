@@ -17,13 +17,13 @@ function normalizeMaxConcurrency(maxConcurrency) {
     }
     return Math.max(1, Math.min(50, Math.floor(maxConcurrency)));
 }
-// Directory scanner class
-class DirectoryScanner {
-    constructor(config) {
+// Case-insensitive name matcher with wildcard (*) support
+class PatternMatcher {
+    constructor(patterns) {
         this.simplePatterns = new Set();
         this.regexPatterns = [];
         // Pre-compile patterns for faster matching
-        for (const pattern of config.excludePatterns) {
+        for (const pattern of patterns) {
             if (pattern.includes('*')) {
                 this.regexPatterns.push(wildcardPatternToRegex(pattern));
             }
@@ -31,6 +31,21 @@ class DirectoryScanner {
                 this.simplePatterns.add(pattern.toLowerCase());
             }
         }
+    }
+    matches(name) {
+        // O(1) lookup for simple patterns
+        if (this.simplePatterns.has(name.toLowerCase())) {
+            return true;
+        }
+        // Check regex patterns
+        return this.regexPatterns.some(regex => regex.test(name));
+    }
+}
+// Directory scanner class
+class DirectoryScanner {
+    constructor(config) {
+        this.excludeMatcher = new PatternMatcher(config.excludePatterns);
+        this.junkMatcher = new PatternMatcher(config.junkFiles);
     }
     async scanDirectories(rootPath, token) {
         const directories = [];
@@ -56,7 +71,7 @@ class DirectoryScanner {
                     if (item.isDirectory()) {
                         subdirectories.push(path.join(dirPath, item.name));
                     }
-                    else {
+                    else if (!this.junkMatcher.matches(item.name)) {
                         hasFiles = true;
                     }
                 }
@@ -85,13 +100,7 @@ class DirectoryScanner {
         return directories.sort((a, b) => b.depth - a.depth);
     }
     shouldExclude(dirName) {
-        const lowerName = dirName.toLowerCase();
-        // O(1) lookup for simple patterns
-        if (this.simplePatterns.has(lowerName)) {
-            return true;
-        }
-        // Check regex patterns
-        return this.regexPatterns.some(regex => regex.test(dirName));
+        return this.excludeMatcher.matches(dirName);
     }
 }
 exports.DirectoryScanner = DirectoryScanner;
@@ -99,6 +108,7 @@ exports.DirectoryScanner = DirectoryScanner;
 class EmptyFolderRemover {
     constructor(config) {
         this.config = config;
+        this.junkMatcher = new PatternMatcher(config.junkFiles);
         this.stats = {
             totalScanned: 0,
             totalRemoved: 0,
@@ -144,9 +154,13 @@ class EmptyFolderRemover {
                 onProgress(`[DRY RUN] Would remove: ${path.basename(dir.path)}`);
                 return;
             }
-            // Double-check if directory is still empty before removal
-            const items = await fs.readdir(dir.path);
-            if (items.length === 0) {
+            // Double-check if directory is still empty (junk files aside) before removal
+            const items = await fs.readdir(dir.path, { withFileTypes: true });
+            const junkItems = items.filter(item => !item.isDirectory() && this.junkMatcher.matches(item.name));
+            if (junkItems.length === items.length) {
+                for (const junk of junkItems) {
+                    await fs.unlink(path.join(dir.path, junk.name));
+                }
                 await fs.rmdir(dir.path);
                 this.stats.totalRemoved++;
                 onProgress(`Removed: ${path.basename(dir.path)}`);

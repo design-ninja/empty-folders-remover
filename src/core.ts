@@ -4,6 +4,7 @@ import * as path from "path";
 // Configuration interface
 export interface EmptyFolderConfig {
   excludePatterns: string[];
+  junkFiles: string[];
   maxConcurrency: number;
   dryRun: boolean;
   showProgress: boolean;
@@ -48,23 +49,44 @@ function normalizeMaxConcurrency(maxConcurrency: number): number {
   return Math.max(1, Math.min(50, Math.floor(maxConcurrency)));
 }
 
-// Directory scanner class
-export class DirectoryScanner {
+// Case-insensitive name matcher with wildcard (*) support
+class PatternMatcher {
   private simplePatterns: Set<string>;
   private regexPatterns: RegExp[];
 
-  constructor(config: EmptyFolderConfig) {
+  constructor(patterns: string[]) {
     this.simplePatterns = new Set<string>();
     this.regexPatterns = [];
 
     // Pre-compile patterns for faster matching
-    for (const pattern of config.excludePatterns) {
+    for (const pattern of patterns) {
       if (pattern.includes('*')) {
         this.regexPatterns.push(wildcardPatternToRegex(pattern));
       } else {
         this.simplePatterns.add(pattern.toLowerCase());
       }
     }
+  }
+
+  matches(name: string): boolean {
+    // O(1) lookup for simple patterns
+    if (this.simplePatterns.has(name.toLowerCase())) {
+      return true;
+    }
+
+    // Check regex patterns
+    return this.regexPatterns.some(regex => regex.test(name));
+  }
+}
+
+// Directory scanner class
+export class DirectoryScanner {
+  private excludeMatcher: PatternMatcher;
+  private junkMatcher: PatternMatcher;
+
+  constructor(config: EmptyFolderConfig) {
+    this.excludeMatcher = new PatternMatcher(config.excludePatterns);
+    this.junkMatcher = new PatternMatcher(config.junkFiles);
   }
 
   async scanDirectories(rootPath: string, token: CancellationToken): Promise<DirectoryInfo[]> {
@@ -96,7 +118,7 @@ export class DirectoryScanner {
 
           if (item.isDirectory()) {
             subdirectories.push(path.join(dirPath, item.name));
-          } else {
+          } else if (!this.junkMatcher.matches(item.name)) {
             hasFiles = true;
           }
         }
@@ -132,25 +154,19 @@ export class DirectoryScanner {
   }
 
   shouldExclude(dirName: string): boolean {
-    const lowerName = dirName.toLowerCase();
-
-    // O(1) lookup for simple patterns
-    if (this.simplePatterns.has(lowerName)) {
-      return true;
-    }
-
-    // Check regex patterns
-    return this.regexPatterns.some(regex => regex.test(dirName));
+    return this.excludeMatcher.matches(dirName);
   }
 }
 
 // Empty folder remover class
 export class EmptyFolderRemover {
   private config: EmptyFolderConfig;
+  private junkMatcher: PatternMatcher;
   private stats: RemovalStats;
 
   constructor(config: EmptyFolderConfig) {
     this.config = config;
+    this.junkMatcher = new PatternMatcher(config.junkFiles);
     this.stats = {
       totalScanned: 0,
       totalRemoved: 0,
@@ -208,10 +224,14 @@ export class EmptyFolderRemover {
         return;
       }
 
-      // Double-check if directory is still empty before removal
-      const items = await fs.readdir(dir.path);
+      // Double-check if directory is still empty (junk files aside) before removal
+      const items = await fs.readdir(dir.path, { withFileTypes: true });
+      const junkItems = items.filter(item => !item.isDirectory() && this.junkMatcher.matches(item.name));
 
-      if (items.length === 0) {
+      if (junkItems.length === items.length) {
+        for (const junk of junkItems) {
+          await fs.unlink(path.join(dir.path, junk.name));
+        }
         await fs.rmdir(dir.path);
 
         this.stats.totalRemoved++;

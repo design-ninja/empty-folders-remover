@@ -7,6 +7,7 @@ A simple and efficient Visual Studio Code extension that helps maintain cleanlin
 - 🔍 Recursive search for empty folders in your project
 - 🗑️ Automatic removal of found empty directories
 - 🧹 Cascade removal: removes entire chains of empty folders (children → parents)
+- 🧽 Ignores OS junk files (`.DS_Store`, `Thumbs.db`, `desktop.ini`): folders containing only them are treated as empty (configurable via `emptyFoldersRemover.junkFiles`)
 - 📁 Multi-root workspace support: processes all folders in your workspace
 - 📊 Display of removed folders count
 - ⚡ Quick execution via command palette
@@ -34,7 +35,7 @@ After execution, the extension will show the number of empty folders removed.
 
 ## Safety Notes
 
-- The extension only removes completely empty folders
+- The extension only removes completely empty folders (OS junk files like `.DS_Store` don't count as content and are deleted with the folder)
 - It's recommended to backup your project before using
 - Folders containing hidden files (like .gitkeep) are not considered empty and won't be removed
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.0] - 2026-07-08
+
+### Added
+- New `emptyFoldersRemover.junkFiles` setting (default: `.DS_Store`, `Thumbs.db`, `desktop.ini`): folders containing only OS junk files are now treated as empty and removed together with the junk files. Supports wildcards (*), case-insensitive. Set to `[]` to restore the previous strict behavior.
+
 ## [1.4.1] - 2026-05-06
 
 ### Fixed

@@ -1,7 +1,7 @@
 {
   "name": "empty-folders-remover",
   "displayName": "Empty Folders Remover",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "VS Code extension to remove empty folders",
   "icon": "icon.png",
   "main": "./out/extension.js",
@@ -44,6 +44,18 @@
             ".mypy_cache"
           ],
           "description": "Folder patterns to exclude from scanning. Supports wildcards (*)"
+        },
+        "emptyFoldersRemover.junkFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            ".DS_Store",
+            "Thumbs.db",
+            "desktop.ini"
+          ],
+          "description": "OS-generated junk files that don't count as folder content. Folders containing only these files are treated as empty, and the files are deleted along with the folder. Supports wildcards (*)"
         },
         "emptyFoldersRemover.maxConcurrency": {
           "type": "number",

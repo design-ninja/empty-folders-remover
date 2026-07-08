@@ -45,6 +45,7 @@ function getConfiguration(): EmptyFolderConfig {
       'dist', 'build', '.next', '.nuxt', 'coverage',
       '__pycache__', '.pytest_cache', '.mypy_cache'
     ]),
+    junkFiles: config.get('junkFiles', ['.DS_Store', 'Thumbs.db', 'desktop.ini']),
     maxConcurrency: config.get('maxConcurrency', 10),
     dryRun: config.get('dryRun', false),
     showProgress: config.get('showProgress', true)
