@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.6.0] - 2026-07-08
+
+### Safety
+- Removed folders and junk files are now moved to the OS trash instead of being deleted permanently (new `emptyFoldersRemover.useTrash` setting, enabled by default)
+- Nested workspace roots in multi-root workspaces are now protected from removal
+- Junk file patterns without literal characters (e.g. `*`, `*.*`) are ignored with a warning to prevent accidental mass deletion
+- Declared Workspace Trust support: the extension is disabled in untrusted workspaces
+
+### Added
+- "Remove Empty Folders" entry in the Explorer folder context menu (processes only the selected folder)
+- Scan warnings: unreadable directories are now reported instead of being silently skipped
+- The `showProgress` setting now actually works: when disabled, per-item details (folder name, percentage, ETA) are hidden
+
+### Fixed
+- License metadata corrected to MIT (matching the LICENSE file)
+- `aggregateStats` now sums operation durations
+- Command works correctly when the workspace contains zero folders
+
+### Performance
+- Scanning concurrency is now capped by `maxConcurrency` (previously unbounded, could exhaust file descriptors on huge trees)
+- Removal now uses a worker pool instead of fixed batches
+
+### Changed
+- Command palette entry is now prefixed with the "Empty Folders Remover" category
+- Minimum supported VS Code version raised to 1.125
+- Updated all dev dependencies (TypeScript 6, Mocha 11.7.6); removed unused ones (`glob`, `sinon`, `ts-node`)
+
 ## [1.5.0] - 2026-07-08
 
 ### Added

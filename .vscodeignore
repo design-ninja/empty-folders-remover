@@ -6,6 +6,8 @@ src/**
 .gitignore
 .yarnrc
 .npmrc
+.env
+.env.*
 tsconfig.json
 **/*.map
 **/*.ts

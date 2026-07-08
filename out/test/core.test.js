@@ -1,9 +1,42 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-const assert = require("assert");
-const fs = require("fs/promises");
-const path = require("path");
-const os = require("os");
+const assert = __importStar(require("assert"));
+const fs = __importStar(require("fs/promises"));
+const path = __importStar(require("path"));
+const os = __importStar(require("os"));
 const core_1 = require("../core");
 // Helper to create a test directory structure
 async function createTestStructure(basePath, structure) {
@@ -183,13 +216,54 @@ describe("DirectoryScanner", () => {
             assert.ok(!paths.some(p => p.includes(".git")), "Should not scan .git");
             assert.ok(paths.some(p => p.includes("src")), "Should scan src");
         });
-        it("should sort directories by depth (deepest first)", async () => {
-            await fs.mkdir(path.join(tempDir, "a", "b", "c"), { recursive: true });
-            const scanner = new core_1.DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+        it("should ignore unsafe junk patterns (treat matching files as content)", async () => {
+            await createTestStructure(tempDir, {
+                "folder/important.txt": "content"
+            });
+            const scanner = new core_1.DirectoryScanner(createTestConfig({
+                excludePatterns: [],
+                junkFiles: ["*", "*.*", ".DS_Store"]
+            }));
             const directories = await scanner.scanDirectories(tempDir, createToken());
-            // Verify deepest comes first
-            for (let i = 1; i < directories.length; i++) {
-                assert.ok(directories[i - 1].depth >= directories[i].depth, `Directory at index ${i - 1} should have depth >= directory at index ${i}`);
+            const folder = directories.find(d => d.path === path.join(tempDir, "folder"));
+            assert.strictEqual(folder?.isEmpty, false, "Unsafe patterns must not mark real files as junk");
+        });
+        it("should collect scan errors for unreadable directories", async function () {
+            if (process.platform === "win32" || process.getuid?.() === 0) {
+                this.skip(); // chmod-based access denial is unreliable on Windows / as root
+            }
+            const lockedDir = path.join(tempDir, "locked");
+            await fs.mkdir(lockedDir);
+            await fs.chmod(lockedDir, 0o000);
+            try {
+                const scanner = new core_1.DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+                const directories = await scanner.scanDirectories(tempDir, createToken());
+                assert.strictEqual(scanner.getScanErrors().length, 1);
+                assert.ok(scanner.getScanErrors()[0].includes(lockedDir));
+                // The unreadable directory must not be reported at all (never marked empty)
+                assert.ok(!directories.some(d => d.path === lockedDir));
+            }
+            finally {
+                await fs.chmod(lockedDir, 0o755);
+            }
+        });
+        it("should reset scan errors between scans", async function () {
+            if (process.platform === "win32" || process.getuid?.() === 0) {
+                this.skip();
+            }
+            const lockedDir = path.join(tempDir, "locked");
+            await fs.mkdir(lockedDir);
+            await fs.chmod(lockedDir, 0o000);
+            try {
+                const scanner = new core_1.DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+                await scanner.scanDirectories(tempDir, createToken());
+                assert.strictEqual(scanner.getScanErrors().length, 1);
+                await fs.chmod(lockedDir, 0o755);
+                await scanner.scanDirectories(tempDir, createToken());
+                assert.strictEqual(scanner.getScanErrors().length, 0);
+            }
+            finally {
+                await fs.chmod(lockedDir, 0o755).catch(() => { });
             }
         });
         it("should respect cancellation token", async () => {
@@ -389,6 +463,81 @@ describe("EmptyFolderRemover", () => {
             const stats = await remover.removeEmptyFolders(directories, () => { }, createToken());
             assert.strictEqual(stats.totalScanned, 3);
         });
+        it("should never remove protected paths (nested workspace roots)", async () => {
+            const nestedRoot = path.join(tempDir, "packages", "lib");
+            await fs.mkdir(nestedRoot, { recursive: true });
+            const scanner = new core_1.DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+            const directories = await scanner.scanDirectories(tempDir, createToken());
+            const remover = new core_1.EmptyFolderRemover(createTestConfig({
+                protectedPaths: [nestedRoot]
+            }));
+            const stats = await remover.removeEmptyFolders(directories, () => { }, createToken());
+            await fs.access(nestedRoot); // Protected nested root must survive
+            // Its parent chain must survive too: "packages" still contains "lib"
+            await fs.access(path.join(tempDir, "packages"));
+            assert.strictEqual(stats.totalRemoved, 0);
+        });
+        it("should reset stats between removeEmptyFolders calls", async () => {
+            const emptyDir = path.join(tempDir, "empty");
+            await fs.mkdir(emptyDir);
+            const directories = [
+                { path: emptyDir, depth: 1, isEmpty: true }
+            ];
+            const remover = new core_1.EmptyFolderRemover(createTestConfig());
+            await remover.removeEmptyFolders(directories, () => { }, createToken());
+            const secondStats = await remover.removeEmptyFolders([], () => { }, createToken());
+            assert.strictEqual(secondStats.totalRemoved, 0, "Stats must not accumulate across calls");
+            assert.strictEqual(secondStats.totalScanned, 0);
+        });
+        it("should route deletions through injected file operations", async () => {
+            const emptyDir = path.join(tempDir, "junk-only");
+            await fs.mkdir(emptyDir);
+            await fs.writeFile(path.join(emptyDir, ".DS_Store"), "junk");
+            const deletedFiles = [];
+            const deletedDirs = [];
+            const remover = new core_1.EmptyFolderRemover(createTestConfig(), {
+                readDirectory: async (dirPath) => {
+                    const items = await fs.readdir(dirPath, { withFileTypes: true });
+                    return items.map(i => ({ name: i.name, isDirectory: i.isDirectory() }));
+                },
+                deleteFile: async (filePath) => {
+                    deletedFiles.push(filePath);
+                },
+                deleteEmptyDirectory: async (dirPath) => {
+                    deletedDirs.push(dirPath);
+                }
+            });
+            const directories = [
+                { path: emptyDir, depth: 1, isEmpty: true }
+            ];
+            const stats = await remover.removeEmptyFolders(directories, () => { }, createToken());
+            assert.strictEqual(stats.totalRemoved, 1);
+            assert.deepStrictEqual(deletedFiles, [path.join(emptyDir, ".DS_Store")]);
+            assert.deepStrictEqual(deletedDirs, [emptyDir]);
+            // Real file system untouched by the fake operations
+            await fs.access(path.join(emptyDir, ".DS_Store"));
+        });
+    });
+});
+describe("Junk pattern safety", () => {
+    it("should flag patterns without literal characters as unsafe", () => {
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)("*"), true);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)("*.*"), true);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)("**"), true);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)("."), true);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)(" * "), true);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)(""), true);
+    });
+    it("should keep patterns with literal characters as safe", () => {
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)(".DS_Store"), false);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)("*.tmp"), false);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)("Thumbs.db"), false);
+        assert.strictEqual((0, core_1.isUnsafeJunkPattern)("desktop.ini"), false);
+    });
+    it("should partition patterns into safe and unsafe", () => {
+        const result = (0, core_1.partitionJunkPatterns)([".DS_Store", "*", "*.tmp", "*.*"]);
+        assert.deepStrictEqual(result.safe, [".DS_Store", "*.tmp"]);
+        assert.deepStrictEqual(result.unsafe, ["*", "*.*"]);
     });
 });
 describe("Helper functions", () => {
@@ -422,6 +571,7 @@ describe("Helper functions", () => {
             assert.strictEqual(aggregated.totalScanned, 30);
             assert.strictEqual(aggregated.totalRemoved, 13);
             assert.strictEqual(aggregated.totalErrors, 3);
+            assert.strictEqual(aggregated.duration, 300);
             assert.deepStrictEqual(aggregated.errors, ["error1", "error2", "error3"]);
         });
         it("should handle empty array", () => {
