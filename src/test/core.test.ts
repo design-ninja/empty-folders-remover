@@ -9,6 +9,8 @@ import {
   CancellationToken,
   createEmptyStats,
   aggregateStats,
+  partitionJunkPatterns,
+  isUnsafeJunkPattern,
   DirectoryInfo
 } from "../core";
 
@@ -33,6 +35,7 @@ function createToken(cancelled = false): CancellationToken {
 function createTestConfig(overrides: Partial<EmptyFolderConfig> = {}): EmptyFolderConfig {
   return {
     excludePatterns: [".git", "node_modules"],
+    junkFiles: [".DS_Store", "Thumbs.db", "desktop.ini"],
     maxConcurrency: 10,
     dryRun: false,
     showProgress: true,
@@ -164,6 +167,59 @@ describe("DirectoryScanner", () => {
       assert.strictEqual(parent?.isEmpty, false);
     });
 
+    it("should treat folders containing only junk files as empty", async () => {
+      await createTestStructure(tempDir, {
+        "assets/video/.DS_Store": "junk",
+        "non-empty/.DS_Store": "junk",
+        "non-empty/file.txt": "content"
+      });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const assets = directories.find(d => d.path === path.join(tempDir, "assets"));
+      const video = directories.find(d => d.path === path.join(tempDir, "assets", "video"));
+      const nonEmpty = directories.find(d => d.path === path.join(tempDir, "non-empty"));
+
+      assert.strictEqual(video?.isEmpty, true, "video contains only .DS_Store");
+      assert.strictEqual(assets?.isEmpty, true, "assets contains only empty video");
+      assert.strictEqual(nonEmpty?.isEmpty, false, "non-empty has a real file");
+    });
+
+    it("should match junk files case-insensitively and with wildcards", async () => {
+      await createTestStructure(tempDir, {
+        "a/THUMBS.DB": "junk",
+        "b/scratch.tmp": "junk"
+      });
+
+      const scanner = new DirectoryScanner(createTestConfig({
+        excludePatterns: [],
+        junkFiles: ["Thumbs.db", "*.tmp"]
+      }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const a = directories.find(d => d.path === path.join(tempDir, "a"));
+      const b = directories.find(d => d.path === path.join(tempDir, "b"));
+
+      assert.strictEqual(a?.isEmpty, true);
+      assert.strictEqual(b?.isEmpty, true);
+    });
+
+    it("should treat junk files as content when junkFiles is empty", async () => {
+      await createTestStructure(tempDir, {
+        "folder/.DS_Store": "junk"
+      });
+
+      const scanner = new DirectoryScanner(createTestConfig({
+        excludePatterns: [],
+        junkFiles: []
+      }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const folder = directories.find(d => d.path === path.join(tempDir, "folder"));
+      assert.strictEqual(folder?.isEmpty, false);
+    });
+
     it("should skip excluded directories", async () => {
       await fs.mkdir(path.join(tempDir, "node_modules", "package"), { recursive: true });
       await fs.mkdir(path.join(tempDir, ".git", "objects"), { recursive: true });
@@ -181,18 +237,63 @@ describe("DirectoryScanner", () => {
       assert.ok(paths.some(p => p.includes("src")), "Should scan src");
     });
 
-    it("should sort directories by depth (deepest first)", async () => {
-      await fs.mkdir(path.join(tempDir, "a", "b", "c"), { recursive: true });
+    it("should ignore unsafe junk patterns (treat matching files as content)", async () => {
+      await createTestStructure(tempDir, {
+        "folder/important.txt": "content"
+      });
 
-      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const scanner = new DirectoryScanner(createTestConfig({
+        excludePatterns: [],
+        junkFiles: ["*", "*.*", ".DS_Store"]
+      }));
       const directories = await scanner.scanDirectories(tempDir, createToken());
 
-      // Verify deepest comes first
-      for (let i = 1; i < directories.length; i++) {
-        assert.ok(
-          directories[i - 1].depth >= directories[i].depth,
-          `Directory at index ${i - 1} should have depth >= directory at index ${i}`
-        );
+      const folder = directories.find(d => d.path === path.join(tempDir, "folder"));
+      assert.strictEqual(folder?.isEmpty, false, "Unsafe patterns must not mark real files as junk");
+    });
+
+    it("should collect scan errors for unreadable directories", async function () {
+      if (process.platform === "win32" || process.getuid?.() === 0) {
+        this.skip(); // chmod-based access denial is unreliable on Windows / as root
+      }
+
+      const lockedDir = path.join(tempDir, "locked");
+      await fs.mkdir(lockedDir);
+      await fs.chmod(lockedDir, 0o000);
+
+      try {
+        const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+        const directories = await scanner.scanDirectories(tempDir, createToken());
+
+        assert.strictEqual(scanner.getScanErrors().length, 1);
+        assert.ok(scanner.getScanErrors()[0].includes(lockedDir));
+
+        // The unreadable directory must not be reported at all (never marked empty)
+        assert.ok(!directories.some(d => d.path === lockedDir));
+      } finally {
+        await fs.chmod(lockedDir, 0o755);
+      }
+    });
+
+    it("should reset scan errors between scans", async function () {
+      if (process.platform === "win32" || process.getuid?.() === 0) {
+        this.skip();
+      }
+
+      const lockedDir = path.join(tempDir, "locked");
+      await fs.mkdir(lockedDir);
+      await fs.chmod(lockedDir, 0o000);
+
+      try {
+        const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+        await scanner.scanDirectories(tempDir, createToken());
+        assert.strictEqual(scanner.getScanErrors().length, 1);
+
+        await fs.chmod(lockedDir, 0o755);
+        await scanner.scanDirectories(tempDir, createToken());
+        assert.strictEqual(scanner.getScanErrors().length, 0);
+      } finally {
+        await fs.chmod(lockedDir, 0o755).catch(() => {});
       }
     });
 
@@ -354,6 +455,55 @@ describe("EmptyFolderRemover", () => {
       await assert.rejects(fs.access(path.join(tempDir, "a")), "Nested chain should be removed");
     });
 
+    it("should remove nested folders containing only junk files", async () => {
+      const video = path.join(tempDir, "assets", "video");
+      await fs.mkdir(video, { recursive: true });
+      await fs.writeFile(path.join(video, ".DS_Store"), "junk");
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+      const remover = new EmptyFolderRemover(createTestConfig());
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 2);
+      assert.strictEqual(stats.totalErrors, 0);
+      await assert.rejects(fs.access(path.join(tempDir, "assets")), "assets should be removed");
+    });
+
+    it("should not remove a folder where a real file appeared next to junk", async () => {
+      const dirPath = path.join(tempDir, "was-empty");
+      await fs.mkdir(dirPath);
+      await fs.writeFile(path.join(dirPath, ".DS_Store"), "junk");
+      await fs.writeFile(path.join(dirPath, "important.txt"), "content");
+
+      const directories: DirectoryInfo[] = [
+        { path: dirPath, depth: 1, isEmpty: true }
+      ];
+
+      const remover = new EmptyFolderRemover(createTestConfig());
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 0);
+      await fs.access(path.join(dirPath, ".DS_Store"));
+      await fs.access(path.join(dirPath, "important.txt"));
+    });
+
+    it("should not delete junk files in dry run mode", async () => {
+      const dirPath = path.join(tempDir, "junk-only");
+      await fs.mkdir(dirPath);
+      await fs.writeFile(path.join(dirPath, ".DS_Store"), "junk");
+
+      const directories: DirectoryInfo[] = [
+        { path: dirPath, depth: 1, isEmpty: true }
+      ];
+
+      const remover = new EmptyFolderRemover(createTestConfig({ dryRun: true }));
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 1);
+      await fs.access(path.join(dirPath, ".DS_Store"));
+    });
+
     it("should clamp invalid max concurrency values", async () => {
       const emptyDir = path.join(tempDir, "empty");
       await fs.mkdir(emptyDir);
@@ -411,6 +561,97 @@ describe("EmptyFolderRemover", () => {
 
       assert.strictEqual(stats.totalScanned, 3);
     });
+
+    it("should never remove protected paths (nested workspace roots)", async () => {
+      const nestedRoot = path.join(tempDir, "packages", "lib");
+      await fs.mkdir(nestedRoot, { recursive: true });
+
+      const scanner = new DirectoryScanner(createTestConfig({ excludePatterns: [] }));
+      const directories = await scanner.scanDirectories(tempDir, createToken());
+
+      const remover = new EmptyFolderRemover(createTestConfig({
+        protectedPaths: [nestedRoot]
+      }));
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      await fs.access(nestedRoot); // Protected nested root must survive
+      // Its parent chain must survive too: "packages" still contains "lib"
+      await fs.access(path.join(tempDir, "packages"));
+      assert.strictEqual(stats.totalRemoved, 0);
+    });
+
+    it("should reset stats between removeEmptyFolders calls", async () => {
+      const emptyDir = path.join(tempDir, "empty");
+      await fs.mkdir(emptyDir);
+
+      const directories: DirectoryInfo[] = [
+        { path: emptyDir, depth: 1, isEmpty: true }
+      ];
+
+      const remover = new EmptyFolderRemover(createTestConfig());
+      await remover.removeEmptyFolders(directories, () => {}, createToken());
+      const secondStats = await remover.removeEmptyFolders([], () => {}, createToken());
+
+      assert.strictEqual(secondStats.totalRemoved, 0, "Stats must not accumulate across calls");
+      assert.strictEqual(secondStats.totalScanned, 0);
+    });
+
+    it("should route deletions through injected file operations", async () => {
+      const emptyDir = path.join(tempDir, "junk-only");
+      await fs.mkdir(emptyDir);
+      await fs.writeFile(path.join(emptyDir, ".DS_Store"), "junk");
+
+      const deletedFiles: string[] = [];
+      const deletedDirs: string[] = [];
+
+      const remover = new EmptyFolderRemover(createTestConfig(), {
+        readDirectory: async (dirPath) => {
+          const items = await fs.readdir(dirPath, { withFileTypes: true });
+          return items.map(i => ({ name: i.name, isDirectory: i.isDirectory() }));
+        },
+        deleteFile: async (filePath) => {
+          deletedFiles.push(filePath);
+        },
+        deleteEmptyDirectory: async (dirPath) => {
+          deletedDirs.push(dirPath);
+        }
+      });
+
+      const directories: DirectoryInfo[] = [
+        { path: emptyDir, depth: 1, isEmpty: true }
+      ];
+      const stats = await remover.removeEmptyFolders(directories, () => {}, createToken());
+
+      assert.strictEqual(stats.totalRemoved, 1);
+      assert.deepStrictEqual(deletedFiles, [path.join(emptyDir, ".DS_Store")]);
+      assert.deepStrictEqual(deletedDirs, [emptyDir]);
+      // Real file system untouched by the fake operations
+      await fs.access(path.join(emptyDir, ".DS_Store"));
+    });
+  });
+});
+
+describe("Junk pattern safety", () => {
+  it("should flag patterns without literal characters as unsafe", () => {
+    assert.strictEqual(isUnsafeJunkPattern("*"), true);
+    assert.strictEqual(isUnsafeJunkPattern("*.*"), true);
+    assert.strictEqual(isUnsafeJunkPattern("**"), true);
+    assert.strictEqual(isUnsafeJunkPattern("."), true);
+    assert.strictEqual(isUnsafeJunkPattern(" * "), true);
+    assert.strictEqual(isUnsafeJunkPattern(""), true);
+  });
+
+  it("should keep patterns with literal characters as safe", () => {
+    assert.strictEqual(isUnsafeJunkPattern(".DS_Store"), false);
+    assert.strictEqual(isUnsafeJunkPattern("*.tmp"), false);
+    assert.strictEqual(isUnsafeJunkPattern("Thumbs.db"), false);
+    assert.strictEqual(isUnsafeJunkPattern("desktop.ini"), false);
+  });
+
+  it("should partition patterns into safe and unsafe", () => {
+    const result = partitionJunkPatterns([".DS_Store", "*", "*.tmp", "*.*"]);
+    assert.deepStrictEqual(result.safe, [".DS_Store", "*.tmp"]);
+    assert.deepStrictEqual(result.unsafe, ["*", "*.*"]);
   });
 });
 
@@ -449,6 +690,7 @@ describe("Helper functions", () => {
       assert.strictEqual(aggregated.totalScanned, 30);
       assert.strictEqual(aggregated.totalRemoved, 13);
       assert.strictEqual(aggregated.totalErrors, 3);
+      assert.strictEqual(aggregated.duration, 300);
       assert.deepStrictEqual(aggregated.errors, ["error1", "error2", "error3"]);
     });
 
