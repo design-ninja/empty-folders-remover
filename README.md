@@ -33,7 +33,7 @@ After execution, the extension will show the number of empty folders removed.
 
 ## Requirements
 
-- Visual Studio Code version 1.125.0 or higher
+- Visual Studio Code version 1.96.0 or higher
 
 ## Safety Notes
 

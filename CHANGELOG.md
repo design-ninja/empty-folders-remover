@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.6.1] - 2026-07-08
+
+### Fixed
+- The 1.6.0 package published to Open VSX was built before the changelog was finalized and shipped without the 1.6.0 release notes; this release restores them
+- Lowered the minimum supported VS Code version back to 1.96: version 1.6.0 unnecessarily required 1.125, locking out users on older VS Code and Cursor builds (no 1.125-only APIs are used)
+
 ## [1.6.0] - 2026-07-08
 
 ### Safety

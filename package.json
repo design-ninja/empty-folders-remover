@@ -1,7 +1,7 @@
 {
   "name": "empty-folders-remover",
   "displayName": "Empty Folders Remover",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "VS Code extension to remove empty folders",
   "icon": "icon.png",
   "main": "./out/extension.js",
@@ -121,7 +121,7 @@
   "license": "MIT",
   "publisher": "lirik",
   "engines": {
-    "vscode": "^1.125.0"
+    "vscode": "^1.96.0"
   },
   "categories": [
     "Other"
@@ -137,7 +137,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "^22.20.0",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "~1.96.0",
     "@vscode/vsce": "^3.9.2",
     "mocha": "^11.7.6",
     "typescript": "^6.0.3"
